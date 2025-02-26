@@ -1,0 +1,29 @@
+# Tech Stack Document
+
+## Introduction
+
+This project is an MVP video dubbing service designed to help English video content creators effectively reach a Korean audience. The application lets users either upload an MP4 video file or provide a YouTube link (with a maximum duration of 10 minutes) and then uses Google Cloud’s services to transform the content. By converting the video’s audio from English to text, translating it into Korean, and finally synthesizing the new audio, the system creates a dubbed version of the original video. The project emphasizes a streamlined user experience with real-time progress updates, robust error handling, and a modular design that allows for future expansion such as additional languages and integrations.
+
+## Frontend Technologies
+
+The frontend is built using React.js, chosen for its ability to create responsive and interactive user interfaces. React enables the development of a clean, intuitive layout that is essential for user satisfaction. Material-UI is incorporated to ensure a minimalist design and responsiveness so that users can navigate easily without distractions. The integration of V0 by Vercel provides access to AI-powered frontend component building, allowing for modern design patterns that further enhance the development process. The frontend also displays live progress updates using dynamic components that inform the user at each stage of the dubbing process, ensuring transparency and clarity.
+
+## Backend Technologies
+
+The backend is constructed with FastAPI and Python, ensuring high performance and rapid development of API endpoints. FastAPI is well-known for its speed and simplicity in managing asynchronous operations, which is crucial when coordinating several computationally intensive tasks such as audio processing and translation. The backend orchestrates interactions with Google Cloud’s Speech-to-Text, Neural Machine Translation, and Text-to-Speech services, which handle the core functionalities of converting audio to text, translating language, and generating audio output. Additionally, ffmpeg is employed to extract and merge audio from video files, ensuring that the system handles media processing smoothly while maintaining video quality.
+
+## Infrastructure and Deployment
+
+The application’s deployment is planned with reliable, scalable infrastructure in mind. The frontend can be hosted on modern platforms that support React applications, such as Vercel, which also brings along built-in CI/CD pipelines for continuous integration and updates. For the backend, traditional cloud hosting platforms that support Python and FastAPI are considered to ensure scalability and maintainability. Version control is managed through a Git-based system (for example, GitHub or GitLab), facilitating team collaboration and efficient code management. These infrastructure choices prioritize high availability and streamlined deployment processes, allowing the product to grow without compromising on reliability or performance.
+
+## Third-Party Integrations
+
+Third-party integrations play a significant role in enhancing the application's functionality. Google Cloud’s suite of services—namely Speech-to-Text (STT), Neural Machine Translation (NMT), and Text-to-Speech (TTS)—form the backbone of the dubbing process, enabling accurate and efficient translation of video content. In addition to these, ffmpeg is utilized for critical media processing tasks, such as extracting audio from MP4 files or YouTube videos and merging processed audio with original video content. Other tools used during development, including VS Code, Cursor, Deepseek, Claude AI, and ChatGPT, support a modern development workflow by offering advanced coding assistance, real-time suggestions, and improved code quality. Analytics are integrated with Google Analytics and Google Cloud Monitoring to track usage, performance, and to quickly identify any bottlenecks or issues in real-time.
+
+## Security and Performance Considerations
+
+Security and performance have been foundational guidelines throughout the creation of this tech stack. On the security front, the FastAPI backend incorporates robust error handling with try-catch blocks to manage exceptions, particularly when interfacing with external APIs. User input is carefully validated to prevent problems such as unsupported file formats, and clear, user-friendly error messages are provided on the frontend. Data transmitted between the user’s system and backend services is protected with secure communication practices. Performance optimizations are achieved by ensuring that the asynchronous processing capabilities of FastAPI work seamlessly with Google Cloud services, minimizing delays during the STT, translation, and TTS processes. Additionally, the system leverages real-time updates in the frontend to manage user expectations and maintain a fluid and responsive experience even when processing intensive operations.
+
+## Conclusion and Overall Tech Stack Summary
+
+In summary, the project is built on a carefully chosen set of technologies that work together to deliver a smooth, efficient, and future-proof video dubbing service. The frontend employs React.js and Material-UI to provide an accessible and engaging user interface, while the FastAPI and Python-driven backend, along with essential media processing powered by ffmpeg, ensures that the dubbing pipeline is robust and scalable. Integration with Google Cloud’s suite adds professional-level translation and synthesis, and modern development tools like VS Code, Cursor, Deepseek, Claude AI, and ChatGPT help maintain high-quality code throughout the process. The design inherently embraces modularity and extensibility, paving the way for additional language support and further integrations down the line. This combination of technologies not only meets the current needs of the MVP but also sets the foundation for future growth and improvement.
