@@ -9,3 +9,5 @@
 remux_concat.py
 translation.py
 tts.py
+
+credentials.json

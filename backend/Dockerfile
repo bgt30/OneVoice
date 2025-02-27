@@ -19,7 +19,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Google Cloud 인증 파일 복사
-COPY credentials.json .
+COPY ./credentials.json .
 
 # 소스 코드 복사
 COPY src/ src/
