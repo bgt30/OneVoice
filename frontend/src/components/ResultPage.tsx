@@ -14,6 +14,9 @@ import { Download, Home } from '@mui/icons-material';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getTaskStatus, downloadVideo, submitFeedback } from '../api/client';
 
+// API 기본 URL 가져오기
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
 const ResultPage: React.FC = () => {
   const { taskId } = useParams<{ taskId: string }>();
   const navigate = useNavigate();
@@ -21,29 +24,52 @@ const ResultPage: React.FC = () => {
   const [rating, setRating] = useState<number | null>(null);
   const [feedback, setFeedback] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [status, setStatus] = useState<string>('pending');
+  const [progress, setProgress] = useState<number>(0);
+  const [stage, setStage] = useState<string | null>(null);
 
   useEffect(() => {
-    loadResult();
-  }, [taskId]);
-
-  const loadResult = async () => {
-    try {
-      setIsLoading(true);
-      const response = await getTaskStatus(taskId || '');
-      if (response.result) {
-        setVideoUrl(response.result);
-      } else {
-        setError('결과를 찾을 수 없습니다.');
+    if (!taskId) return;
+    
+    // 작업 상태를 주기적으로 확인
+    const checkStatus = async () => {
+      try {
+        const response = await getTaskStatus(taskId);
+        setStatus(response.status);
+        setProgress(response.progress || 0);
+        setStage(response.stage || null);
+        
+        if (response.status === 'completed') {
+          // 완료된 경우 다운로드 URL 설정
+          setVideoUrl(`${API_BASE_URL}/api/process/download/${taskId}`);
+          setIsLoading(false);
+        } else if (response.status === 'failed') {
+          setError(response.error || '처리 중 오류가 발생했습니다.');
+          setIsLoading(false);
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : '상태 확인 중 오류가 발생했습니다.';
+        setError(errorMessage);
+        setIsLoading(false);
       }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : '결과 로딩 중 오류가 발생했습니다.';
-      setError(errorMessage);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+    };
+    
+    // 초기 상태 확인
+    checkStatus();
+    
+    // 완료되지 않은 경우 3초마다 상태 확인
+    const intervalId = setInterval(() => {
+      if (status !== 'completed' && status !== 'failed') {
+        checkStatus();
+      } else {
+        clearInterval(intervalId);
+      }
+    }, 3000);
+    
+    return () => clearInterval(intervalId);
+  }, [taskId, status]);
 
   const handleDownload = async () => {
     if (!taskId) return;
@@ -83,12 +109,29 @@ const ResultPage: React.FC = () => {
     }
   };
 
-  if (isLoading) {
+  // 로딩 중이거나 처리 중인 경우 진행 상태 표시
+  if (isLoading || status === 'pending' || status === 'processing') {
     return (
       <Container maxWidth="md">
-        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}>
-          <CircularProgress />
+        <Box sx={{ mt: 8, mb: 4 }}>
+          <Typography variant="h4" component="h1" gutterBottom align="center">
+            {status === 'pending' ? '처리 대기 중...' : '처리 중...'}
+          </Typography>
         </Box>
+        
+        <Paper elevation={3} sx={{ p: 4, mb: 4 }}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+            <CircularProgress variant="determinate" value={progress} size={80} />
+            <Typography variant="h6">
+              {progress}% 완료
+            </Typography>
+            {stage && (
+              <Typography variant="body1">
+                현재 단계: {stage === 'stt' ? '음성 인식' : stage === 'translation' ? '번역' : '음성 합성'}
+              </Typography>
+            )}
+          </Box>
+        </Paper>
       </Container>
     );
   }

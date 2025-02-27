@@ -15,7 +15,7 @@ PROJECT_ID = os.getenv('GOOGLE_CLOUD_PROJECT_ID')
 LOCATION = os.getenv('GOOGLE_CLOUD_LOCATION', 'global')
 
 # 임시 파일 저장 경로
-TEMP_DIR = os.path.join('/src/temp')
+TEMP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'temp')
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 # 지원하는 언어 설정

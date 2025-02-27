@@ -11,14 +11,18 @@ export interface TaskStatusResponse {
 }
 
 export const getTaskStatus = async (taskId: string): Promise<TaskStatusResponse> => {
+  console.log(`Fetching task status from ${API_BASE_URL}/api/process/status/${taskId}`);
   const response = await fetch(`${API_BASE_URL}/api/process/status/${taskId}`);
   
   if (!response.ok) {
     const error = await response.json();
+    console.error('Error response from API:', error);
     throw new Error(error.detail || '상태 조회에 실패했습니다.');
   }
 
-  return response.json();
+  const data = await response.json();
+  console.log('API response data:', data);
+  return data;
 };
 
 export const uploadVideo = async (formData: FormData): Promise<{ task_id: string }> => {

@@ -2,11 +2,8 @@ import os
 from google.cloud import texttospeech, storage
 from pathlib import Path
 from typing import Optional, List, Tuple
-import pandas as pd
 from pydub import AudioSegment
 import io
-import ffmpeg
-import time
 from . import config
 
 class TTSService:
@@ -16,6 +13,10 @@ class TTSService:
         self.bucket_name = "onevoice-test-bucket"
         self.output_dir = os.path.join(config.TEMP_DIR, "audio")
         self.text_ko_dir = os.path.join(config.TEMP_DIR, "text_ko")
+        
+        # 필요한 디렉토리 생성
+        Path(self.output_dir).mkdir(parents=True, exist_ok=True)
+        Path(self.text_ko_dir).mkdir(parents=True, exist_ok=True)
 
     async def delete_existing_file(self, gcs_uri: str) -> bool:
         """GCS에서 기존 파일 삭제"""
@@ -121,7 +122,6 @@ class TTSService:
                     lines = lines[1:]  # 헤더 제외
                 
                 total_lines = len(lines)
-                last_check_time = time.time()  # 마지막 체크 시간 초기화
                 previous_end_time = 0.0  # 이전 세그먼트의 종료 시간 초기화
                 
                 for i, line in enumerate(lines, start=1):
@@ -173,13 +173,6 @@ class TTSService:
                     except Exception as e:
                         print(f"세그먼트 처리 중 오류 발생: {str(e)}")
                         continue
-                    
-                    # 5초마다 진행률 체크
-                    current_time = time.time()
-                    if current_time - last_check_time >= 5:
-                        progress = (i / total_lines) * 100
-                        print(f"진행률: {progress:.2f}% ({i}/{total_lines})")
-                        last_check_time = current_time
             
             # 최종 오디오 파일 저장 (MP3 형식 유지)
             final_audio.export(output_path, format="mp3")

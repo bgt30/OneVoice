@@ -7,7 +7,7 @@ import {
   Paper,
   Alert,
 } from '@mui/material';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { getTaskStatus } from '../api/client';
 
 export type TaskStatus = 'pending' | 'processing' | 'completed' | 'failed';
@@ -30,7 +30,6 @@ const stageLabels = {
 
 const TranslationScreen: React.FC = () => {
   const { taskId } = useParams<{ taskId: string }>();
-  const navigate = useNavigate();
   const [taskStatus, setTaskStatus] = useState<TaskStatusResponse>({
     status: 'pending',
     progress: 0
@@ -40,24 +39,30 @@ const TranslationScreen: React.FC = () => {
   useEffect(() => {
     const checkStatus = async () => {
       try {
+        console.log('Checking task status for taskId:', taskId);
         const response = await getTaskStatus(taskId || '');
+        console.log('Task status response:', response);
         setTaskStatus(response);
 
         if (response.status === 'completed') {
-          navigate(`/result/${taskId}`);
+          console.log('Task completed, navigating to result page');
+          window.location.href = `/result/${taskId}`;
         } else if (response.status === 'failed') {
+          console.log('Task failed:', response.error);
           setError(response.error || '처리 중 오류가 발생했습니다.');
         } else {
+          console.log('Task still in progress, checking again in 2 seconds');
           setTimeout(checkStatus, 2000);
         }
       } catch (error) {
+        console.error('Error checking task status:', error);
         const errorMessage = error instanceof Error ? error.message : '상태 확인 중 오류가 발생했습니다.';
         setError(errorMessage);
       }
     };
 
     checkStatus();
-  }, [taskId, navigate]);
+  }, [taskId]);
 
   const getStageProgress = () => {
     if (!taskStatus.stage || !taskStatus.progress) return 0;

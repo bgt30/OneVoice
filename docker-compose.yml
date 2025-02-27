@@ -37,7 +37,7 @@ services:
       - TZ=Asia/Seoul
     volumes:
       - ./backend/credentials.json:/app/credentials.json:ro
-      - ./backend/temp:/src/temp
+      - ./backend/temp:/app/temp
       - gcp_config:/root/.config/gcloud
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
