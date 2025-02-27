@@ -103,7 +103,9 @@ class TTSService:
     async def process_tsv_segments(self, tsv_path: str, task_id: str) -> Optional[str]:
         """TSV 파일의 세그먼트를 처리하여 음성으로 변환"""
         try:
-            output_path = os.path.join(self.output_dir, f"{task_id}_merged.mp3")
+            tsv_filename = os.path.basename(tsv_path)  # tsv 파일명 추출
+            output_filename = os.path.splitext(tsv_filename)[0] + "_ko.wav"  # 확장자 제거 후 _ko.wav 추가
+            output_path = os.path.join(self.output_dir, output_filename)  # 최종 경로 생성
             final_audio = AudioSegment.empty()
             epsilon = 1e-6  # 부동소수점 오차 보정용
             

@@ -1,15 +1,19 @@
 from google.cloud import translate_v2 as translate
+from google.cloud import storage
 import os
 from pathlib import Path
 import subprocess
 import re
 from typing import Optional
 import spacy
+import pandas as pd
 from . import config
 
 class NMTService:
     def __init__(self):
-        self.client = translate.Client()
+        self.client = config.translate_client
+        self.storage_client = storage.Client()
+        self.bucket_name = "onevoice-test-bucket"
         self.output_dir = os.path.join(config.TEMP_DIR, "text_ko")
         Path(self.output_dir).mkdir(parents=True, exist_ok=True)
         # SpaCy 영어 모델 로드
@@ -18,10 +22,22 @@ class NMTService:
     async def _upload_to_gcs(self, local_path: str, gcs_path: str) -> bool:
         """GCS에 파일 업로드"""
         try:
-            subprocess.run(["gcloud", "storage", "cp", local_path, gcs_path], check=True)
+            # GCS 경로 파싱 (gs://bucket-name/path/to/file)
+            gcs_parts = gcs_path.replace("gs://", "").split("/", 1)
+            bucket_name = gcs_parts[0]
+            blob_name = gcs_parts[1] if len(gcs_parts) > 1 else os.path.basename(local_path)
+            
+            # 스토리지 클라이언트 사용
+            bucket = self.storage_client.bucket(bucket_name)
+            blob = bucket.blob(blob_name)
+            
+            # 파일 업로드
+            print(f"파일 업로드 시작: {local_path} -> {gcs_path}")
+            blob.upload_from_filename(local_path)
             print(f"파일 업로드 완료: {local_path} -> {gcs_path}")
+            
             return True
-        except subprocess.CalledProcessError as e:
+        except Exception as e:
             print(f"GCS 업로드 오류: {str(e)}")
             return False
 

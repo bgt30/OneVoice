@@ -1,5 +1,5 @@
 import os
-from google.cloud import speech, translate, texttospeech
+from google.cloud import speech, translate_v2 as translate, texttospeech
 from dotenv import load_dotenv
 
 # 환경 변수 로드
@@ -7,7 +7,7 @@ load_dotenv()
 
 # Google Cloud 클라이언트 초기화
 speech_client = speech.SpeechClient()
-translate_client = translate.TranslationServiceClient()
+translate_client = translate.Client()
 tts_client = texttospeech.TextToSpeechClient()
 
 # 프로젝트 설정

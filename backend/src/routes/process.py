@@ -1,7 +1,7 @@
 import os
 import uuid
 from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks
-from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
+from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
 from typing import Optional, Tuple
 import re
@@ -17,6 +17,8 @@ from src.services.tts import tts_service
 from src.services.video_audio_merger import video_audio_merger
 from google.cloud import storage
 import tempfile
+import asyncio
+import shutil
 
 router = APIRouter()
 task_manager = TaskManager()
@@ -44,10 +46,23 @@ def sanitize_filename(filename: str) -> str:
 async def upload_to_gcs(local_path: str, gcs_path: str) -> bool:
     """로컬 파일을 GCS 버킷에 업로드"""
     try:
-        subprocess.run(["gcloud", "storage", "cp", local_path, gcs_path], check=True)
+        # GCS 경로 파싱 (gs://bucket-name/path/to/file)
+        gcs_parts = gcs_path.replace("gs://", "").split("/", 1)
+        bucket_name = gcs_parts[0]
+        blob_name = gcs_parts[1] if len(gcs_parts) > 1 else os.path.basename(local_path)
+        
+        # 스토리지 클라이언트 생성
+        storage_client = storage.Client()
+        bucket = storage_client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        
+        # 파일 업로드
+        print(f"파일 업로드 시작: {local_path} -> {gcs_path}")
+        blob.upload_from_filename(local_path)
         print(f"파일 업로드 완료: {local_path} -> {gcs_path}")
+        
         return True
-    except subprocess.CalledProcessError as e:
+    except Exception as e:
         print(f"GCS 업로드 오류: {str(e)}")
         return False
 
@@ -83,36 +98,64 @@ async def download_youtube_video(url: str) -> Tuple[str, str, str]:
                     raise HTTPException(status_code=400, detail="10분 이하의 동영상만 처리 가능합니다")
                 
                 original_title = info['title']
-                video_title = sanitize_filename(original_title)
+                sanitized_title = sanitize_filename(original_title)
                 
                 print(f"원본 제목: {original_title}")
-                print(f"정제된 제목: {video_title}")
+                print(f"정제된 제목: {sanitized_title}")
                 
                 # 영상 다운로드
                 ydl.download([url])
                 
-                video_path = os.path.join(output_dir, f"{video_title}.mp4")
-                original_audio_path = os.path.join(output_dir, f"{video_title}.wav")
-                denoised_audio_path = os.path.join(output_dir, f"{video_title}_denoised.wav")
+                # 원본 파일 경로 (다운로드된 파일)
+                original_video_path = os.path.join(output_dir, f"{original_title}.mp4")
                 
-                print(f"비디오 경로: {video_path}")
-                print(f"파일 존재 여부: {os.path.exists(video_path)}")
+                # 정제된 파일 경로 (이후 사용할 경로)
+                sanitized_video_path = os.path.join(output_dir, f"{sanitized_title}.mp4")
+                sanitized_audio_path = os.path.join(output_dir, f"{sanitized_title}.wav")
+                sanitized_denoised_audio_path = os.path.join(output_dir, f"{sanitized_title}_denoised.wav")
                 
-                if not os.path.exists(video_path):
-                    # input_videos 디렉토리의 모든 mp4 파일 검색
+                # 원본 파일이 존재하면 정제된 이름으로 변경
+                if os.path.exists(original_video_path):
+                    # 이미 정제된 이름의 파일이 있으면 먼저 삭제
+                    if os.path.exists(sanitized_video_path) and original_video_path != sanitized_video_path:
+                        os.remove(sanitized_video_path)
+                    
+                    # 원본 파일을 정제된 이름으로 변경 (원본과 정제된 이름이 다른 경우에만)
+                    if original_video_path != sanitized_video_path:
+                        os.rename(original_video_path, sanitized_video_path)
+                    
+                    print(f"파일 이름 변경: {original_video_path} -> {sanitized_video_path}")
+                    video_path = sanitized_video_path
+                else:
+                    # 원본 파일을 찾을 수 없는 경우, 디렉토리에서 가장 최근 파일 검색
                     mp4_files = list(Path(output_dir).glob("*.mp4"))
                     print(f"디렉토리의 모든 MP4 파일: {[f.name for f in mp4_files]}")
                     
                     if mp4_files:
                         # 가장 최근에 생성된 파일 사용
                         latest_file = max(mp4_files, key=lambda x: x.stat().st_mtime)
-                        video_path = str(latest_file)
-                        print(f"최근 다운로드된 파일 사용: {video_path}")
+                        original_video_path = str(latest_file)
                         
-                        # 파일 이름 기반으로 오디오 파일 경로 업데이트
-                        base_name = os.path.splitext(latest_file.name)[0]
-                        original_audio_path = os.path.join(output_dir, f"{base_name}.wav")
-                        denoised_audio_path = os.path.join(output_dir, f"{base_name}_denoised.wav")
+                        # 최근 파일의 이름을 정제
+                        latest_filename = latest_file.name
+                        sanitized_latest = sanitize_filename(os.path.splitext(latest_filename)[0]) + ".mp4"
+                        sanitized_video_path = os.path.join(output_dir, sanitized_latest)
+                        
+                        # 이름 변경 (원본과 정제된 이름이 다른 경우에만)
+                        if original_video_path != sanitized_video_path:
+                            # 이미 정제된 이름의 파일이 있으면 먼저 삭제
+                            if os.path.exists(sanitized_video_path):
+                                os.remove(sanitized_video_path)
+                            os.rename(original_video_path, sanitized_video_path)
+                        
+                        print(f"최근 다운로드된 파일 사용 및 이름 변경: {original_video_path} -> {sanitized_video_path}")
+                        
+                        # 정제된 오디오 파일 경로 업데이트
+                        sanitized_title = os.path.splitext(sanitized_latest)[0]
+                        sanitized_audio_path = os.path.join(output_dir, f"{sanitized_title}.wav")
+                        sanitized_denoised_audio_path = os.path.join(output_dir, f"{sanitized_title}_denoised.wav")
+                        
+                        video_path = sanitized_video_path
                     else:
                         raise HTTPException(
                             status_code=400,
@@ -122,7 +165,7 @@ async def download_youtube_video(url: str) -> Tuple[str, str, str]:
                 try:
                     # 원본 오디오 추출
                     stream = ffmpeg.input(video_path)
-                    stream = ffmpeg.output(stream, original_audio_path,
+                    stream = ffmpeg.output(stream, sanitized_audio_path,
                                          acodec='pcm_s16le',
                                          ac=2,
                                          ar='44.1k')
@@ -130,20 +173,20 @@ async def download_youtube_video(url: str) -> Tuple[str, str, str]:
                     
                     # 노이즈 제거 오디오 추출
                     stream = ffmpeg.input(video_path)
-                    stream = ffmpeg.output(stream, denoised_audio_path,
+                    stream = ffmpeg.output(stream, sanitized_denoised_audio_path,
                                         acodec='pcm_s16le',
                                         ac=1,
                                         ar='16k',
                                         af='afftdn=nf=-25')
                     ffmpeg.run(stream, overwrite_output=True)
 
-                    # GCS 버킷에 업로드
+                    # GCS 버킷에 업로드 (정제된 파일 이름 사용)
                     gcs_bucket = "gs://onevoice-test-bucket/resources/input_videos"
                     await upload_to_gcs(video_path, f"{gcs_bucket}/{os.path.basename(video_path)}")
-                    await upload_to_gcs(original_audio_path, f"{gcs_bucket}/{os.path.basename(original_audio_path)}")
-                    await upload_to_gcs(denoised_audio_path, f"{gcs_bucket}/{os.path.basename(denoised_audio_path)}")
+                    await upload_to_gcs(sanitized_audio_path, f"{gcs_bucket}/{os.path.basename(sanitized_audio_path)}")
+                    await upload_to_gcs(sanitized_denoised_audio_path, f"{gcs_bucket}/{os.path.basename(sanitized_denoised_audio_path)}")
 
-                    return video_path, denoised_audio_path, original_audio_path
+                    return video_path, sanitized_denoised_audio_path, sanitized_audio_path
                     
                 except ffmpeg.Error as e:
                     raise HTTPException(
@@ -203,15 +246,12 @@ async def process_video_file(video_path: str, task_id: str, denoised_audio_path:
             raise Exception("음성 합성에 실패했습니다.")
         
         # 비디오와 오디오 병합
-        result = await video_audio_merger.process_video(task_id, video_path, tts_audio_path, original_audio_path)
-        if not result:
+        output_path = await video_audio_merger.process_video(task_id, video_path, tts_audio_path, original_audio_path)
+        if not output_path:
             raise Exception("비디오 합성에 실패했습니다.")
         
-        # 결과 파일 경로와 GCS URL 추출
-        output_path, gcs_url = result
-        
-        # 작업 완료 (GCS URL 포함)
-        await task_manager.complete_task(task_id, output_path, gcs_url)
+        # 작업 완료
+        await task_manager.complete_task(task_id, output_path)
         
     except Exception as e:
         await task_manager.fail_task(task_id, str(e))
@@ -227,15 +267,23 @@ async def upload_video(
         raise HTTPException(status_code=400, detail="MP4 파일만 업로드 가능합니다.")
     
     try:
-        # 임시 파일로 저장
-        video_path = os.path.join(config.TEMP_DIR, file.filename)
+        # 파일 이름 정제
+        original_filename = file.filename
+        sanitized_filename = sanitize_filename(os.path.splitext(original_filename)[0]) + ".mp4"
+        
+        print(f"원본 파일명: {original_filename}")
+        print(f"정제된 파일명: {sanitized_filename}")
+        
+        # 정제된 이름으로 임시 파일 저장
+        video_path = os.path.join(config.TEMP_DIR, sanitized_filename)
         with open(video_path, "wb") as buffer:
             content = await file.read()
             buffer.write(content)
             
-        # 오디오 추출
-        denoised_audio_path = os.path.join(config.TEMP_DIR, f"{os.path.splitext(file.filename)[0]}_denoised.wav")
-        original_audio_path = os.path.join(config.TEMP_DIR, f"{os.path.splitext(file.filename)[0]}.wav")
+        # 오디오 추출 경로 설정 (정제된 이름 사용)
+        sanitized_base = os.path.splitext(sanitized_filename)[0]
+        denoised_audio_path = os.path.join(config.TEMP_DIR, f"{sanitized_base}_denoised.wav")
+        original_audio_path = os.path.join(config.TEMP_DIR, f"{sanitized_base}.wav")
         
         try:
             # 원본 오디오 추출
@@ -363,12 +411,7 @@ async def download_video(task_id: str):
             
         if not task_status.get("result"):
             raise HTTPException(status_code=404, detail="결과 파일을 찾을 수 없습니다.")
-        
-        # GCS URL이 있으면 리다이렉트
-        if task_status.get("gcs_url"):
-            return RedirectResponse(url=task_status["gcs_url"])
             
-        # GCS URL이 없는 경우 기존 방식으로 처리
         # GCS에서 파일 다운로드
         storage_client = storage.Client()
         bucket = storage_client.bucket("onevoice-test-bucket")

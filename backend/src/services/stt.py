@@ -27,13 +27,11 @@ class STTService:
             Optional[str]: 변환된 텍스트
         """
         try:
-            # GCS에 오디오 파일 업로드
+            # GCS URI 생성 (이미 업로드된 파일 사용)
             file_name = os.path.basename(audio_path)
             gcs_uri = f"gs://{self.bucket_name}/resources/input_videos/{file_name}"
             
-            # GCS에 업로드
-            if not await self._upload_to_gcs(audio_path, f"resources/input_videos/{file_name}"):
-                raise Exception("GCS 업로드 실패")
+            print(f"STT: GCS에 이미 업로드된 파일 사용: {gcs_uri}")
             
             # 음성 인식 설정
             audio = types.RecognitionAudio(uri=gcs_uri)

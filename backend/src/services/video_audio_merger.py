@@ -1,7 +1,7 @@
 import ffmpeg
 import os
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 from google.cloud import storage
 import subprocess
 from . import config
@@ -22,16 +22,24 @@ class VideoAudioMerger:
             subprocess.run(["demucs", "--two-stems", "vocals", audio_path, "-o", temp_output_dir], 
                          check=True, capture_output=True)
             
-            bgm_path = os.path.join(temp_output_dir, "htdemucs", 
-                                   os.path.basename(audio_path).replace(".wav", ""), 
-                                   "bgm.wav")
+            # 분리된 오디오 디렉토리 경로
+            base_dir = os.path.join(temp_output_dir, "htdemucs", 
+                                   os.path.basename(audio_path).replace(".wav", ""))
             
-            if not os.path.exists(bgm_path):
-                raise FileNotFoundError("배경음악 파일을 찾을 수 없습니다.")
+            print(f"분리된 오디오 디렉토리: {base_dir}")
+            
+            # 디렉토리 내용 확인
+            if os.path.exists(base_dir):
+                print(f"디렉토리 내용: {os.listdir(base_dir)}")
                 
-            print(f"배경음악 분리 완료: {bgm_path}")
-            return bgm_path
+                # no_vocals.wav 파일 찾기 (Demucs의 실제 출력)
+                no_vocals_path = os.path.join(base_dir, "no_vocals.wav")
+                if os.path.exists(no_vocals_path):
+                    print(f"배경음악 파일 찾음 (no_vocals.wav): {no_vocals_path}")
+                    return no_vocals_path
             
+            raise FileNotFoundError("배경음악 파일(no_vocals.wav)을 찾을 수 없습니다.")
+                
         except Exception as e:
             print(f"배경음악 분리 실패: {str(e)}")
             return None
@@ -60,7 +68,7 @@ class VideoAudioMerger:
             print(f"오디오 합성 실패: {e.stderr.decode() if e.stderr else str(e)}")
             return None
 
-    async def merge_video_audio(self, video_path: str, audio_path: str) -> Optional[Tuple[str, str]]:
+    async def merge_video_audio(self, video_path: str, audio_path: str) -> Optional[str]:
         """비디오와 오디오 합성"""
         try:
             output_path = os.path.join(self.output_dir, f"dubbed_{os.path.basename(video_path)}")
@@ -86,18 +94,16 @@ class VideoAudioMerger:
             
             # GCS에 결과물 업로드
             destination_blob_name = f"resources/output_videos/{os.path.basename(output_path)}"
-            gcs_url = await self._upload_to_gcs(output_path, destination_blob_name)
-            if gcs_url:
-                print(f"결과물 업로드 완료: {gcs_url}")
-                return output_path, gcs_url
-            else:
-                return output_path, None
+            if await self._upload_to_gcs(output_path, destination_blob_name):
+                print(f"결과물 업로드 완료: gs://{self.bucket_name}/{destination_blob_name}")
+            
+            return output_path
             
         except ffmpeg.Error as e:
             print(f"비디오 합성 실패: {e.stderr.decode() if e.stderr else str(e)}")
             return None
 
-    async def _upload_to_gcs(self, local_path: str, destination_blob_name: str) -> Optional[str]:
+    async def _upload_to_gcs(self, local_path: str, destination_blob_name: str) -> bool:
         """GCS에 파일 업로드"""
         try:
             bucket = self.storage_client.bucket(self.bucket_name)
@@ -105,20 +111,14 @@ class VideoAudioMerger:
             
             print(f"파일 업로드 시작: {local_path} -> gs://{self.bucket_name}/{destination_blob_name}")
             blob.upload_from_filename(local_path)
+            print(f"파일 업로드 완료: {local_path} -> gs://{self.bucket_name}/{destination_blob_name}")
             
-            # 파일을 공개적으로 액세스 가능하게 설정
-            blob.make_public()
-            
-            # 공개 URL 생성
-            public_url = blob.public_url
-            print(f"파일 업로드 완료: {local_path} -> {public_url}")
-            
-            return public_url
+            return True
         except Exception as e:
             print(f"GCS 업로드 오류: {str(e)}")
-            return None
+            return False
 
-    async def process_video(self, task_id: str, video_path: str, tts_audio_path: str, original_audio_path: str = None) -> Optional[Tuple[str, str]]:
+    async def process_video(self, task_id: str, video_path: str, tts_audio_path: str, original_audio_path: str = None) -> Optional[str]:
         """전체 비디오 처리 프로세스"""
         try:
             # 원본 오디오 경로 확인
@@ -146,12 +146,11 @@ class VideoAudioMerger:
                 raise Exception("오디오 합성 실패")
 
             # 비디오와 합성된 오디오 병합
-            result = await self.merge_video_audio(video_path, merged_audio_path)
-            if not result:
+            output_path = await self.merge_video_audio(video_path, merged_audio_path)
+            if not output_path:
                 raise Exception("비디오 합성 실패")
-                
-            output_path, gcs_url = result
-            return output_path, gcs_url
+
+            return output_path
 
         except Exception as e:
             print(f"비디오 처리 실패: {str(e)}")

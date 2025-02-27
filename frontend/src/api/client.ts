@@ -8,7 +8,6 @@ export interface TaskStatusResponse {
   progress?: number;
   error?: string;
   result?: string;
-  gcs_url?: string;
 }
 
 export const getTaskStatus = async (taskId: string): Promise<TaskStatusResponse> => {

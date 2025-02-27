@@ -3,6 +3,7 @@
 .python-version
 
 .DS_Store
+backend/.DS_Store
 
 .idea
 

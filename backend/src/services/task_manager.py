@@ -3,7 +3,6 @@ from typing import Optional, Dict, Any
 import redis
 from enum import Enum
 import os
-from datetime import datetime
 
 class TaskStatus(str, Enum):
     PENDING = "pending"
@@ -52,16 +51,13 @@ class TaskManager:
         stage: Optional[ProcessingStage] = None,
         progress: Optional[float] = None,
         result: Optional[str] = None,
-        error: Optional[str] = None,
-        gcs_url: Optional[str] = None
+        error: Optional[str] = None
     ) -> None:
         """작업 상태를 업데이트합니다."""
         task_data = await self.get_task_status(task_id)
-        
         if task_data:
-            task_data["status"] = status
-            task_data["updated_at"] = datetime.now().isoformat()
-            
+            if status:
+                task_data["status"] = status
             if stage:
                 task_data["stage"] = stage
             if progress is not None:
@@ -70,20 +66,17 @@ class TaskManager:
                 task_data["result"] = result
             if error:
                 task_data["error"] = error
-            if gcs_url:
-                task_data["gcs_url"] = gcs_url
             
             self.redis.set(f"task:{task_id}", json.dumps(task_data))
 
-    async def complete_task(self, task_id: str, result: str, gcs_url: Optional[str] = None) -> None:
+    async def complete_task(self, task_id: str, result: str) -> None:
         """작업을 완료 상태로 표시합니다."""
         await self.update_task_status(
             task_id,
             status=TaskStatus.COMPLETED,
             stage=ProcessingStage.TTS,
             progress=100,
-            result=result,
-            gcs_url=gcs_url
+            result=result
         )
 
     async def fail_task(self, task_id: str, error: str) -> None:
