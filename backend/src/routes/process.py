@@ -60,7 +60,7 @@ async def extract_audio(video_path: str, original_audio_path: str, denoised_audi
                              acodec='pcm_s16le',
                              ac=2,
                              ar='44.1k')
-        ffmpeg.run(stream, overwrite_output=True)
+        ffmpeg.run(stream, overwrite_output=True, quiet=True)
         
         # 노이즈 제거 오디오 추출
         stream = ffmpeg.input(video_path)
@@ -69,7 +69,7 @@ async def extract_audio(video_path: str, original_audio_path: str, denoised_audi
                             ac=1,
                             ar='16k',
                             af='afftdn=nf=-25')
-        ffmpeg.run(stream, overwrite_output=True)
+        ffmpeg.run(stream, overwrite_output=True, quiet=True)
         
         return denoised_audio_path, original_audio_path
         

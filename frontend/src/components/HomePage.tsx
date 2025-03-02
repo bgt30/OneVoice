@@ -162,7 +162,7 @@ const HomePage: React.FC = () => {
           {isLoading ? (
             <>
               <CircularProgress size={24} sx={{ mr: 1 }} />
-              처리 중...
+              전처리 중...
             </>
           ) : (
             '변환 시작'

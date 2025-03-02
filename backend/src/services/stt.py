@@ -31,7 +31,7 @@ class STTService:
             file_name = os.path.basename(audio_path)
             gcs_uri = f"gs://{self.bucket_name}/resources/input_videos/{file_name}"
             
-            print(f"STT: GCS에 이미 업로드된 파일 사용: {gcs_uri}")
+            print(f"STT: GCS에 업로드된 파일 사용: {gcs_uri}")
             
             # 음성 인식 설정
             audio = types.RecognitionAudio(uri=gcs_uri)

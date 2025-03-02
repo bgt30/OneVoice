@@ -17,7 +17,7 @@ app = FastAPI(
     title="OneVoice API",
     description="영어 동영상을 한국어로 더빙하는 API",
     version="1.0.0",
-    debug=True
+    debug=False
 )
 
 # CORS 설정

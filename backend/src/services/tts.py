@@ -1,10 +1,14 @@
 import os
+import logging
 from google.cloud import texttospeech, storage
 from pathlib import Path
 from typing import Optional, List, Tuple
 from pydub import AudioSegment
 import io
 from . import config
+
+# pydub 로깅 비활성화 (WARNING 레벨 이상만 표시)
+logging.getLogger("pydub.converter").setLevel(logging.WARNING)
 
 class TTSService:
     def __init__(self):
@@ -175,7 +179,8 @@ class TTSService:
                         continue
             
             # 최종 오디오 파일 저장 (MP3 형식 유지)
-            final_audio.export(output_path, format="mp3")
+            # -loglevel quiet 매개변수를 추가하여 ffmpeg 출력을 비활성화
+            final_audio.export(output_path, format="mp3", parameters=["-loglevel", "quiet"])
             print(f"TTS 처리 완료: {output_path}")
             
             return output_path
