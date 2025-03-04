@@ -111,14 +111,111 @@ class STTService:
             file_name = os.path.basename(audio_path).replace(".wav", "_transcript.txt")
             output_path = os.path.join(self.output_dir, file_name)
             
+            # 짧은 문장 병합 처리
+            merged_transcript = self._merge_short_sentences(transcript)
+            
             with open(output_path, "w", encoding="utf-8") as f:
-                f.write(transcript)
+                f.write(merged_transcript)
 
-            return transcript
+            return merged_transcript
 
         except Exception as e:
             print(f"음성 인식 실패: {str(e)}")
             return None
+
+    def _merge_short_sentences(self, transcript: str) -> str:
+        """
+        2초 이하의 짧은 문장을 이전 문장과 병합하는 함수
+        
+        Args:
+            transcript (str): 타임스탬프가 포함된 원본 텍스트
+            
+        Returns:
+            str: 짧은 문장이 병합된 텍스트
+        """
+        lines = transcript.strip().split('\n')
+        if len(lines) <= 1:
+            return transcript
+            
+        merged_lines = []
+        i = 0
+        
+        while i < len(lines):
+            current_line = lines[i]
+            # 빈 줄이거나 타임스탬프가 없는 줄은 그대로 추가
+            if not current_line.strip() or not current_line.startswith('['):
+                merged_lines.append(current_line)
+                i += 1
+                continue
+                
+            # 타임스탬프와 텍스트 분리
+            try:
+                timestamp_part = current_line[current_line.find('['): current_line.find(']') + 1]
+                text_part = current_line[current_line.find(']') + 1:].strip()
+                
+                # 타임스탬프 파싱 (예: [0.00s - 2.50s])
+                times = timestamp_part.replace('[', '').replace(']', '').replace('s', '').split(' - ')
+                start_time = float(times[0])
+                end_time = float(times[1])
+                duration = end_time - start_time
+                
+                # 현재 문장을 처리
+                if i == 0 or duration > 2.0:
+                    # 첫 문장이거나 2초보다 긴 문장은 그대로 추가
+                    merged_lines.append(current_line)
+                    i += 1
+                else:
+                    # 2초 이하인 짧은 문장 처리
+                    prev_line = merged_lines[-1]
+                    
+                    # 이전 문장에서 타임스탬프와 텍스트 분리
+                    prev_timestamp_part = prev_line[prev_line.find('['): prev_line.find(']') + 1]
+                    prev_text_part = prev_line[prev_line.find(']') + 1:].strip()
+                    
+                    # 이전 문장의 타임스탬프 파싱
+                    prev_times = prev_timestamp_part.replace('[', '').replace(']', '').replace('s', '').split(' - ')
+                    prev_start_time = float(prev_times[0])
+                    
+                    # 병합된 문장 생성
+                    merged_timestamp = f"[{prev_start_time:.2f}s - {end_time:.2f}s]"
+                    merged_text = f"{prev_text_part} {text_part}"
+                    
+                    # 이전 문장 업데이트
+                    merged_lines[-1] = f"{merged_timestamp} {merged_text}"
+                    i += 1
+                    
+                    # 연속된 짧은 문장 처리
+                    j = i
+                    while j < len(lines):
+                        next_line = lines[j]
+                        if not next_line.strip() or not next_line.startswith('['):
+                            break
+                            
+                        # 다음 문장의 타임스탬프와 텍스트 분리
+                        next_timestamp_part = next_line[next_line.find('['): next_line.find(']') + 1]
+                        next_text_part = next_line[next_line.find(']') + 1:].strip()
+                        
+                        # 다음 문장의 타임스탬프 파싱
+                        next_times = next_timestamp_part.replace('[', '').replace(']', '').replace('s', '').split(' - ')
+                        next_start_time = float(next_times[0])
+                        next_end_time = float(next_times[1])
+                        next_duration = next_end_time - next_start_time
+                        
+                        if next_duration <= 2.0:
+                            # 다음 문장도 2초 이하면 계속 병합
+                            merged_timestamp = f"[{prev_start_time:.2f}s - {next_end_time:.2f}s]"
+                            merged_text = f"{merged_text} {next_text_part}"
+                            merged_lines[-1] = f"{merged_timestamp} {merged_text}"
+                            j += 1
+                            i = j
+                        else:
+                            break
+            except Exception as e:
+                print(f"문장 병합 중 오류 발생: {str(e)}, 줄: {current_line}")
+                merged_lines.append(current_line)
+                i += 1
+                
+        return '\n'.join(merged_lines)
 
     async def _upload_to_gcs(self, local_path: str, destination_blob_name: str) -> bool:
         """GCS에 파일 업로드"""
