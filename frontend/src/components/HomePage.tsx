@@ -95,7 +95,7 @@ const HomePage: React.FC = () => {
     <Container maxWidth="md">
       <Box sx={{ mt: 8, mb: 4 }}>
         <Typography variant="h4" component="h1" gutterBottom align="center">
-          OneVoice 비디오 더빙 서비스
+          OneVoice
         </Typography>
         <Typography variant="subtitle1" align="center" color="text.secondary" paragraph>
           영어 동영상을 한국어로 더빙하세요. MP4 파일을 업로드하거나 YouTube 링크를 입력하세요.
