@@ -1,8 +1,6 @@
 # OneVoice
 
-<video width="100%" controls>
-  <source src="home.mp4" type="video/mp4">
-</video>
+![OneVoice 데모](./home.gif)
 
 OneVoice는 영어 동영상을 한국어로 자동 더빙하는 웹 애플리케이션입니다. YouTube 링크나 MP4 파일을 업로드하여 음성을 번역하고 더빙할 수 있습니다.
 
