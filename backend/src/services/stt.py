@@ -1,16 +1,18 @@
 import os
-from google.cloud import speech_v1
+from google.cloud import speech_v2 as speech
 from google.cloud import storage
-from google.cloud.speech_v1 import types
-from . import config
-import subprocess
 from pathlib import Path
 from typing import Optional
 import asyncio
+from . import config
+import subprocess
+import time
+import tempfile
+import json
 
 class STTService:
     def __init__(self):
-        self.client = speech_v1.SpeechClient()
+        self.client = speech.SpeechClient()
         self.storage_client = storage.Client()
         self.bucket_name = "onevoice-test-bucket"
         self.output_dir = os.path.join(config.TEMP_DIR, "text_en")
@@ -31,23 +33,39 @@ class STTService:
             file_name = os.path.basename(audio_path)
             gcs_uri = f"gs://{self.bucket_name}/resources/input_videos/{file_name}"
             
-            print(f"STT: GCS에 업로드된 파일 사용: {gcs_uri}")
+            # 결과를 저장할 GCS 경로 생성
+            base_name = os.path.splitext(file_name)[0]
+            result_filename = f"{base_name}_transcript_{int(time.time())}"
+            results_uri = f"gs://{self.bucket_name}/resources/text_en/{result_filename}/"
             
-            # 음성 인식 설정
-            audio = types.RecognitionAudio(uri=gcs_uri)
-            config = types.RecognitionConfig(
-                encoding=speech_v1.RecognitionConfig.AudioEncoding.LINEAR16,
-                language_code="en-US",
-                use_enhanced=True,
-                model="video",
-                sample_rate_hertz=16000,
-                enable_automatic_punctuation=True,
-                audio_channel_count=1,
-                enable_word_time_offsets=True,
+            print(f"STT: GCS에 업로드된 파일 사용: {gcs_uri}")
+            print(f"STT: 결과 저장 위치: {results_uri}")
+            
+            # v2 인식기 위치 형식 지정
+            recognizer = "projects/7923538798/locations/global/recognizers/onevoice-recognizer"
+            
+            # 음성 인식 요청 생성
+            request = speech.BatchRecognizeRequest(
+                recognizer=recognizer,
+                files=[speech.BatchRecognizeFileMetadata(uri=gcs_uri)],
+                config=speech.RecognitionConfig(
+                    auto_decoding_config=speech.AutoDetectDecodingConfig(),
+                    language_codes=["en-US"],  # 한국어 인식
+                    model="latest_long",  # 긴 오디오에 적합한 모델
+                    features=speech.RecognitionFeatures(
+                        enable_word_time_offsets=True,  # 단어별 타임스탬프 활성화
+                        enable_automatic_punctuation=True  # 자동 구두점 추가
+                    )
+                ),
+                recognition_output_config=speech.RecognitionOutputConfig(
+                    gcs_output_config=speech.GcsOutputConfig(
+                        uri=results_uri
+                    )
+                )
             )
 
-            # 음성 인식 수행
-            operation = self.client.long_running_recognize(config=config, audio=audio)
+            # 비동기 음성 인식 수행
+            operation = self.client.batch_recognize(request=request)
             
             # 진행 상황 모니터링 및 결과 대기
             while not operation.done():
@@ -55,182 +73,173 @@ class STTService:
             
             response = operation.result()
             
+            # 결과 확인
             if not response.results:
+                print("음성 인식 결과가 없습니다.")
                 return None
-
-            # 결과 텍스트 생성
+                
+            # 결과 파일 경로 가져오기
             transcript = ""
-            current_sentence = ""
-            sentence_start_time = None
-            sentence_end_time = None
-            previous_end_time = 0.0
-            epsilon = 1e-6
-
-            for result in response.results:
-                for word_info in result.alternatives[0].words:
-                    word = word_info.word
-                    start_time = round(word_info.start_time.total_seconds(), 2)
-                    end_time = round(word_info.end_time.total_seconds(), 2)
-
-                    # 문장 내/간 빈 구간 감지
-                    time_gap = round(start_time - previous_end_time, 2)
-                    if time_gap > epsilon:
-                        if time_gap >= 1.5:
-                            if current_sentence.strip():
-                                transcript += f"[{sentence_start_time:.2f}s - {sentence_end_time:.2f}s] {current_sentence.strip()}\n"
-                            transcript += f"[{previous_end_time:.2f}s - {start_time:.2f}s] \n"
-                            current_sentence = ""
-                            sentence_start_time = None
-                            sentence_end_time = None
-
-                    # 현재 문장에 단어 추가
-                    current_sentence += word + " "
-
-                    # 문장 시작 시간 설정
-                    if sentence_start_time is None:
-                        sentence_start_time = start_time
-
-                    # 문장 종료 시간 업데이트
-                    sentence_end_time = end_time
-
-                    # 문장 종료 조건
-                    if word[-1] in ['.', '?', '!']:
-                        if current_sentence.strip():
-                            transcript += f"[{sentence_start_time:.2f}s - {sentence_end_time:.2f}s] {current_sentence.strip()}\n"
-                        current_sentence = ""
-                        sentence_start_time = None
-                        sentence_end_time = None
-
-                    previous_end_time = end_time
-
-            # 남은 문장 처리
-            if current_sentence.strip():
-                transcript += f"[{sentence_start_time:.2f}s - {sentence_end_time:.2f}s] {current_sentence.strip()}\n"
-
+            for file_result in response.results.values():
+                # GCS에서 결과 파일 내용 가져오기
+                result_uri = file_result.uri
+                print(f"결과 파일 URI: {result_uri}")
+                
+                # GCS에서 결과 파일 다운로드
+                transcript = await self._download_and_parse_results(result_uri)
+                if transcript:
+                    break  # 첫 번째 결과 파일만 사용
+            
+            if not transcript:
+                print("결과 파일을 처리할 수 없습니다.")
+                return None
+                
             # 결과 파일 저장
             file_name = os.path.basename(audio_path).replace(".wav", "_transcript.txt")
             output_path = os.path.join(self.output_dir, file_name)
             
-            # 짧은 문장 병합 처리
-            merged_transcript = self._merge_short_sentences(transcript)
-            
             with open(output_path, "w", encoding="utf-8") as f:
-                f.write(merged_transcript)
+                f.write(transcript)
 
-            return merged_transcript
+            return transcript
 
         except Exception as e:
             print(f"음성 인식 실패: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
             return None
-
-    def _merge_short_sentences(self, transcript: str) -> str:
+            
+    async def _download_and_parse_results(self, result_uri: str) -> str:
         """
-        2초 이하의 짧은 문장을 이전 문장과 병합하는 함수
+        GCS에서 결과 파일을 다운로드하고 파싱
         
         Args:
-            transcript (str): 타임스탬프가 포함된 원본 텍스트
+            result_uri (str): 결과 파일의 GCS URI
             
         Returns:
-            str: 짧은 문장이 병합된 텍스트
+            str: 파싱된 트랜스크립트 텍스트
         """
-        lines = transcript.strip().split('\n')
-        if len(lines) <= 1:
+        try:
+            # URI에서 버킷 이름과 객체 이름 추출
+            # gs://bucket_name/object_name
+            uri_parts = result_uri.replace("gs://", "").split("/", 1)
+            if len(uri_parts) != 2:
+                raise ValueError(f"Invalid GCS URI: {result_uri}")
+                
+            bucket_name = uri_parts[0]
+            object_name = uri_parts[1]
+            
+            # GCS에서 파일 가져오기
+            bucket = self.storage_client.bucket(bucket_name)
+            blob = bucket.blob(object_name)
+            
+            # 결과 파일 이름 생성
+            result_filename = os.path.basename(object_name)
+            local_result_path = os.path.join(self.output_dir, result_filename)
+            
+            # GCS에서 파일 다운로드하여 text_en 디렉토리에 저장
+            blob.download_to_filename(local_result_path)
+            print(f"결과 파일 다운로드 완료: {local_result_path}")
+            
+            # JSON 파일 읽기
+            with open(local_result_path, "r", encoding="utf-8") as f:
+                results_json = json.load(f)
+                
+            # 문장 구성을 위한 변수 초기화
+            current_sentence = ""
+            sentence_start_time = None
+            sentence_end_time = None
+            words_with_time = []
+            
+            # JSON 결과 파싱하여 트랜스크립트 생성
+            transcript = ""
+            
+            # Speech v2 JSON 결과 구조 파싱
+            if "results" in results_json:
+                for result in results_json["results"]:
+                    if "alternatives" in result and len(result["alternatives"]) > 0:
+                        alternative = result["alternatives"][0]  # 첫 번째 대안만 사용
+                        
+                        if "words" in alternative:
+                            for word_info in alternative["words"]:
+                                word = word_info["word"]
+                                start_offset = word_info["startOffset"]
+                                end_offset = word_info["endOffset"]
+                                
+                                # 's' 문자가 있으면 제거하고 float로 변환
+                                if isinstance(start_offset, str) and 's' in start_offset:
+                                    start_time = float(start_offset.replace('s', ''))
+                                else:
+                                    start_time = float(start_offset)
+                                    
+                                if isinstance(end_offset, str) and 's' in end_offset:
+                                    end_time = float(end_offset.replace('s', ''))
+                                else:
+                                    end_time = float(end_offset)
+                                
+                                # 단어 정보 저장
+                                words_with_time.append({
+                                    "word": word,
+                                    "start_time": start_time,
+                                    "end_time": end_time
+                                })
+            
+            # 단어들을 구두점 기준으로 문장으로 병합
+            if words_with_time:
+                current_sentence = words_with_time[0]["word"]
+                sentence_start_time = words_with_time[0]["start_time"]
+                sentence_end_time = words_with_time[0]["end_time"]
+                sentence_has_content = True  # 현재 문장이 내용을 가지고 있는지 추적
+                
+                for i in range(1, len(words_with_time)):
+                    word_info = words_with_time[i]
+                    word = word_info["word"]
+                    
+                    # 구두점이 있는지 확인
+                    if any(punct in word for punct in ['.', '?', '!']):
+                        # 현재 문장에 단어 추가 (구두점 포함)
+                        current_sentence += " " + word
+                        sentence_end_time = word_info["end_time"]
+                        
+                        # 구두점이 있으면 문장 완성 및 저장
+                        if sentence_has_content and sentence_start_time is not None:
+                            transcript += f"[{sentence_start_time:.2f}s - {sentence_end_time:.2f}s] {current_sentence}\n"
+                        
+                        # 새 문장 초기화
+                        sentence_has_content = False
+                        current_sentence = ""
+                        
+                        # 다음 단어가 있으면 새 문장 시작
+                        if i < len(words_with_time) - 1:
+                            # 다음 단어의 시작 시간이 새 문장의 시작 시간이 됨
+                            sentence_start_time = words_with_time[i+1]["start_time"]
+                    else:
+                        # 구두점이 없는 일반 단어인 경우
+                        if not sentence_has_content:
+                            # 새 문장의 첫 단어
+                            current_sentence = word
+                            sentence_has_content = True
+                            # 시작 시간은 이미 설정되어 있음 (이전 구두점 처리 단계에서)
+                        else:
+                            # 문장에 단어 추가
+                            current_sentence += " " + word
+                        
+                        sentence_end_time = word_info["end_time"]
+                
+                # 마지막 단어 이후 처리 (남은 문장 있는 경우)
+                if sentence_has_content and sentence_start_time is not None:
+                    transcript += f"[{sentence_start_time:.2f}s - {sentence_end_time:.2f}s] {current_sentence}\n"
+            
+            # 파싱 완료 후 JSON 파일 삭제 (옵션)
+            os.unlink(local_result_path)
+            
             return transcript
             
-        merged_lines = []
-        i = 0
-        
-        while i < len(lines):
-            current_line = lines[i]
-            # 빈 줄이거나 타임스탬프가 없는 줄은 그대로 추가
-            if not current_line.strip() or not current_line.startswith('['):
-                merged_lines.append(current_line)
-                i += 1
-                continue
-                
-            # 타임스탬프와 텍스트 분리
-            try:
-                timestamp_part = current_line[current_line.find('['): current_line.find(']') + 1]
-                text_part = current_line[current_line.find(']') + 1:].strip()
-                
-                # 타임스탬프 파싱 (예: [0.00s - 2.50s])
-                times = timestamp_part.replace('[', '').replace(']', '').replace('s', '').split(' - ')
-                start_time = float(times[0])
-                end_time = float(times[1])
-                duration = end_time - start_time
-                
-                # 현재 문장을 처리
-                if i == 0 or duration > 2.0:
-                    # 첫 문장이거나 2초보다 긴 문장은 그대로 추가
-                    merged_lines.append(current_line)
-                    i += 1
-                else:
-                    # 2초 이하인 짧은 문장 처리
-                    prev_line = merged_lines[-1]
-                    
-                    # 이전 문장에서 타임스탬프와 텍스트 분리
-                    prev_timestamp_part = prev_line[prev_line.find('['): prev_line.find(']') + 1]
-                    prev_text_part = prev_line[prev_line.find(']') + 1:].strip()
-                    
-                    # 이전 문장의 타임스탬프 파싱
-                    prev_times = prev_timestamp_part.replace('[', '').replace(']', '').replace('s', '').split(' - ')
-                    prev_start_time = float(prev_times[0])
-                    
-                    # 병합된 문장 생성
-                    merged_timestamp = f"[{prev_start_time:.2f}s - {end_time:.2f}s]"
-                    merged_text = f"{prev_text_part} {text_part}"
-                    
-                    # 이전 문장 업데이트
-                    merged_lines[-1] = f"{merged_timestamp} {merged_text}"
-                    i += 1
-                    
-                    # 연속된 짧은 문장 처리
-                    j = i
-                    while j < len(lines):
-                        next_line = lines[j]
-                        if not next_line.strip() or not next_line.startswith('['):
-                            break
-                            
-                        # 다음 문장의 타임스탬프와 텍스트 분리
-                        next_timestamp_part = next_line[next_line.find('['): next_line.find(']') + 1]
-                        next_text_part = next_line[next_line.find(']') + 1:].strip()
-                        
-                        # 다음 문장의 타임스탬프 파싱
-                        next_times = next_timestamp_part.replace('[', '').replace(']', '').replace('s', '').split(' - ')
-                        next_start_time = float(next_times[0])
-                        next_end_time = float(next_times[1])
-                        next_duration = next_end_time - next_start_time
-                        
-                        if next_duration <= 2.0:
-                            # 다음 문장도 2초 이하면 계속 병합
-                            merged_timestamp = f"[{prev_start_time:.2f}s - {next_end_time:.2f}s]"
-                            merged_text = f"{merged_text} {next_text_part}"
-                            merged_lines[-1] = f"{merged_timestamp} {merged_text}"
-                            j += 1
-                            i = j
-                        else:
-                            break
-            except Exception as e:
-                print(f"문장 병합 중 오류 발생: {str(e)}, 줄: {current_line}")
-                merged_lines.append(current_line)
-                i += 1
-                
-        return '\n'.join(merged_lines)
-
-    async def _upload_to_gcs(self, local_path: str, destination_blob_name: str) -> bool:
-        """GCS에 파일 업로드"""
-        try:
-            bucket = self.storage_client.bucket(self.bucket_name)
-            blob = bucket.blob(destination_blob_name)
-            
-            print(f"파일 업로드 시작: {local_path} -> gs://{self.bucket_name}/{destination_blob_name}")
-            blob.upload_from_filename(local_path)
-            print(f"파일 업로드 완료: {local_path} -> gs://{self.bucket_name}/{destination_blob_name}")
-            
-            return True
         except Exception as e:
-            print(f"GCS 업로드 오류: {str(e)}")
-            return False
+            print(f"결과 파일 처리 오류: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+            return ""
 
     async def process_video(self, video_path: str, denoised_audio_path: str = None, original_audio_path: str = None) -> Optional[str]:
         """비디오에서 텍스트로 변환"""

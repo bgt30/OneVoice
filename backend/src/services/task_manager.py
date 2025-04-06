@@ -12,6 +12,8 @@ class TaskStatus(str, Enum):
 
 class ProcessingStage(str, Enum):
     STT = "stt"
+    DIARIZATION = "diarization"
+    MERGE = "merge"
     TRANSLATION = "translation"
     TTS = "tts"
 
@@ -35,7 +37,9 @@ class TaskManager:
             "stage": None,
             "progress": 0,
             "result": None,
-            "error": None
+            "error": None,
+            "diarization_result": None,
+            "merged_result": None
         }
         self.redis.set(f"task:{task_id}", json.dumps(task_data))
 
@@ -51,7 +55,9 @@ class TaskManager:
         stage: Optional[ProcessingStage] = None,
         progress: Optional[float] = None,
         result: Optional[str] = None,
-        error: Optional[str] = None
+        error: Optional[str] = None,
+        diarization_result: Optional[str] = None,
+        merged_result: Optional[str] = None
     ) -> None:
         """작업 상태를 업데이트합니다."""
         task_data = await self.get_task_status(task_id)
@@ -66,6 +72,10 @@ class TaskManager:
                 task_data["result"] = result
             if error:
                 task_data["error"] = error
+            if diarization_result:
+                task_data["diarization_result"] = diarization_result
+            if merged_result:
+                task_data["merged_result"] = merged_result
             
             self.redis.set(f"task:{task_id}", json.dumps(task_data))
 
@@ -86,6 +96,20 @@ class TaskManager:
             status=TaskStatus.FAILED,
             error=error
         )
+
+    async def update_diarization_result(self, task_id: str, diarization_result: str) -> None:
+        """화자 분리 결과를 업데이트합니다."""
+        task_data = await self.get_task_status(task_id)
+        if task_data:
+            task_data["diarization_result"] = diarization_result
+            self.redis.set(f"task:{task_id}", json.dumps(task_data))
+
+    async def update_merged_result(self, task_id: str, merged_result: str) -> None:
+        """병합된 결과를 업데이트합니다."""
+        task_data = await self.get_task_status(task_id)
+        if task_data:
+            task_data["merged_result"] = merged_result
+            self.redis.set(f"task:{task_id}", json.dumps(task_data))
 
 # 전역 TaskManager 인스턴스 생성
 task_manager = TaskManager() 

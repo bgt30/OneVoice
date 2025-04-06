@@ -12,7 +12,7 @@ tts_client = texttospeech.TextToSpeechClient()
 
 # 프로젝트 설정
 PROJECT_ID = os.getenv('GOOGLE_CLOUD_PROJECT_ID')
-LOCATION = os.getenv('GOOGLE_CLOUD_LOCATION', 'global')
+LOCATION = os.getenv('GOOGLE_CLOUD_LOCATION')
 
 # 임시 파일 저장 경로
 TEMP_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'temp')

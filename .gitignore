@@ -10,6 +10,7 @@ backend/.DS_Store
 remux_concat.py
 translation.py
 tts.py
+pyannote.py
 
 credentials.json
 
