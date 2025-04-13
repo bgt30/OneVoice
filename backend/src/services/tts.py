@@ -54,10 +54,7 @@ class TTSService:
             # 기본 설정으로 음성 합성 시도
             input_text = texttospeech.SynthesisInput(text=text)
             voice = config.VOICE_CONFIG
-            audio_config = texttospeech.AudioConfig(
-                audio_encoding=texttospeech.AudioEncoding.LINEAR16,
-                speaking_rate=1.0  # 기본 속도
-            )
+            audio_config = config.AUDIO_CONFIG
             
             response = self.client.synthesize_speech(
                 input=input_text,
@@ -88,10 +85,7 @@ class TTSService:
         try:
             input_text = texttospeech.SynthesisInput(text=text)
             voice = config.VOICE_CONFIG
-            audio_config = texttospeech.AudioConfig(
-                audio_encoding=texttospeech.AudioEncoding.LINEAR16,
-                speaking_rate=speaking_rate
-            )
+            audio_config = config.AUDIO_CONFIG
             
             response = self.client.synthesize_speech(
                 input=input_text,

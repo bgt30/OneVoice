@@ -144,15 +144,9 @@ class STTService:
             # JSON 파일 읽기
             with open(local_result_path, "r", encoding="utf-8") as f:
                 results_json = json.load(f)
-                
-            # 문장 구성을 위한 변수 초기화
-            current_sentence = ""
-            sentence_start_time = None
-            sentence_end_time = None
-            words_with_time = []
             
-            # JSON 결과 파싱하여 트랜스크립트 생성
-            transcript = ""
+            # 각 단어와 타임스탬프 정보를 저장할 리스트
+            words_with_time = []
             
             # Speech v2 JSON 결과 구조 파싱
             if "results" in results_json:
@@ -184,51 +178,13 @@ class STTService:
                                     "end_time": end_time
                                 })
             
-            # 단어들을 구두점 기준으로 문장으로 병합
-            if words_with_time:
-                current_sentence = words_with_time[0]["word"]
-                sentence_start_time = words_with_time[0]["start_time"]
-                sentence_end_time = words_with_time[0]["end_time"]
-                sentence_has_content = True  # 현재 문장이 내용을 가지고 있는지 추적
-                
-                for i in range(1, len(words_with_time)):
-                    word_info = words_with_time[i]
-                    word = word_info["word"]
-                    
-                    # 구두점이 있는지 확인
-                    if any(punct in word for punct in ['.', '?', '!']):
-                        # 현재 문장에 단어 추가 (구두점 포함)
-                        current_sentence += " " + word
-                        sentence_end_time = word_info["end_time"]
-                        
-                        # 구두점이 있으면 문장 완성 및 저장
-                        if sentence_has_content and sentence_start_time is not None:
-                            transcript += f"[{sentence_start_time:.2f}s - {sentence_end_time:.2f}s] {current_sentence}\n"
-                        
-                        # 새 문장 초기화
-                        sentence_has_content = False
-                        current_sentence = ""
-                        
-                        # 다음 단어가 있으면 새 문장 시작
-                        if i < len(words_with_time) - 1:
-                            # 다음 단어의 시작 시간이 새 문장의 시작 시간이 됨
-                            sentence_start_time = words_with_time[i+1]["start_time"]
-                    else:
-                        # 구두점이 없는 일반 단어인 경우
-                        if not sentence_has_content:
-                            # 새 문장의 첫 단어
-                            current_sentence = word
-                            sentence_has_content = True
-                            # 시작 시간은 이미 설정되어 있음 (이전 구두점 처리 단계에서)
-                        else:
-                            # 문장에 단어 추가
-                            current_sentence += " " + word
-                        
-                        sentence_end_time = word_info["end_time"]
-                
-                # 마지막 단어 이후 처리 (남은 문장 있는 경우)
-                if sentence_has_content and sentence_start_time is not None:
-                    transcript += f"[{sentence_start_time:.2f}s - {sentence_end_time:.2f}s] {current_sentence}\n"
+            # 타임스탬프 순으로 정렬
+            words_with_time.sort(key=lambda x: x["start_time"])
+            
+            # 단어와 시간 정보를 포함한 텍스트 생성
+            transcript = ""
+            for word_info in words_with_time:
+                transcript += f"[{word_info['start_time']:.2f}s - {word_info['end_time']:.2f}s] {word_info['word']}\n"
             
             # 파싱 완료 후 JSON 파일 삭제 (옵션)
             os.unlink(local_result_path)

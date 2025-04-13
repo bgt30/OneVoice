@@ -25,13 +25,12 @@ TARGET_LANGUAGE = 'ko-KR'
 # 음성 설정
 VOICE_CONFIG = texttospeech.VoiceSelectionParams(
     language_code=TARGET_LANGUAGE,
-    name='ko-KR-Standard-A',
-    ssml_gender=texttospeech.SsmlVoiceGender.FEMALE
+    name='ko-KR-Chirp3-HD-Leda',
 )
 
 # 오디오 설정
 AUDIO_CONFIG = texttospeech.AudioConfig(
-    audio_encoding=texttospeech.AudioEncoding.MP3,
+    audio_encoding=texttospeech.AudioEncoding.LINEAR16,
     speaking_rate=1.0,
     pitch=0.0
 ) 

@@ -43,13 +43,16 @@ class DiarizationSTTMerger:
                 print("화자 분리 결과를 파싱할 수 없습니다.")
                 return None
                 
-            # 3. 두 결과 통합
+            # 3. 두 결과 통합 (세그먼트별 화자 할당)
             merged_segments = self._align_segments(stt_segments, diarization_segments)
             
-            # 4. 텍스트 형식으로 결과 저장
+            # 4. 세그먼트를 문장 단위로 병합
+            sentence_segments = self._merge_segments_into_sentences(merged_segments)
+            
+            # 5. 텍스트 형식으로 결과 저장
             output_file = os.path.join(self.output_dir, f"{base_filename}_merged.txt")
             with open(output_file, "w", encoding="utf-8") as f:
-                for segment in merged_segments:
+                for segment in sentence_segments:
                     start_time = segment["start"]
                     end_time = segment["end"]
                     speaker = segment["speaker"]
@@ -234,6 +237,79 @@ class DiarizationSTTMerger:
         except Exception as e:
             print(f"세그먼트 정렬 중 오류 발생: {str(e)}")
             return stt_segments  # 오류 발생 시 원본 STT 세그먼트 반환
+    
+    def _merge_segments_into_sentences(self, 
+                                     aligned_segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        화자 정보가 있는 세그먼트를 화자 변경 또는 구두점 기준으로 문장 단위로 병합
+        
+        Args:
+            aligned_segments (List[Dict[str, Any]]): 화자 정보가 포함된 세그먼트 목록
+            
+        Returns:
+            List[Dict[str, Any]]: 문장 단위로 병합된 세그먼트 목록
+        """
+        try:
+            if not aligned_segments:
+                return []
+                
+            # 시간순으로 정렬
+            sorted_segments = sorted(aligned_segments, key=lambda x: x["start"])
+            
+            sentences = []
+            current_sentence_text = ""
+            current_speaker = None
+            sentence_start_time = None
+            sentence_end_time = None
+            
+            for i, segment in enumerate(sorted_segments):
+                # 첫 번째 세그먼트인 경우 초기화
+                if i == 0:
+                    current_sentence_text = segment["text"]
+                    current_speaker = segment["speaker"]
+                    sentence_start_time = segment["start"]
+                    sentence_end_time = segment["end"]
+                    continue
+                
+                # 화자가 변경되었거나 현재 세그먼트 텍스트에 구두점이 있는 경우
+                prev_segment_text = sorted_segments[i-1]["text"]
+                has_punctuation = any(punct in prev_segment_text for punct in ['.', '!', '?'])
+                
+                if segment["speaker"] != current_speaker or has_punctuation:
+                    # 현재까지의 문장 저장
+                    sentences.append({
+                        "start": sentence_start_time,
+                        "end": sentence_end_time,
+                        "speaker": current_speaker,
+                        "text": current_sentence_text
+                    })
+                    
+                    # 새 문장 시작
+                    current_sentence_text = segment["text"]
+                    current_speaker = segment["speaker"]
+                    sentence_start_time = segment["start"]
+                    sentence_end_time = segment["end"]
+                else:
+                    # 같은 화자의 문장이 계속되는 경우
+                    current_sentence_text += " " + segment["text"]
+                    sentence_end_time = segment["end"]
+            
+            # 마지막 문장 추가
+            if current_sentence_text:
+                sentences.append({
+                    "start": sentence_start_time,
+                    "end": sentence_end_time,
+                    "speaker": current_speaker,
+                    "text": current_sentence_text
+                })
+            
+            return sentences
+            
+        except Exception as e:
+            print(f"문장 병합 중 오류 발생: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+            return aligned_segments  # 오류 발생 시 원본 세그먼트 반환
 
 # 서비스 인스턴스 생성
 diarization_stt_merger = DiarizationSTTMerger() 
