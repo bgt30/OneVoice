@@ -2,7 +2,7 @@ import os
 import logging
 from google.cloud import texttospeech, storage
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Dict, Any
 from pydub import AudioSegment
 import io
 from . import config
@@ -17,6 +17,15 @@ class TTSService:
         self.bucket_name = "onevoice-test-bucket"
         self.output_dir = os.path.join(config.TEMP_DIR, "audio")
         self.text_ko_dir = os.path.join(config.TEMP_DIR, "text_ko")
+        
+        # 화자별 음성 프로필 정의 (1단계, 2단계 완료)
+        self.voice_profiles = {
+            "00": "ko-KR-Chirp3-HD-Aoede",
+            "01": "ko-KR-Chirp3-HD-Charon", 
+            "02": "ko-KR-Chirp3-HD-Kore",  
+            "03": "ko-KR-Chirp3-HD-Fenrir",  
+            "04": "ko-KR-Chirp3-HD-Leda",  
+        }
         
         # 필요한 디렉토리 생성
         Path(self.output_dir).mkdir(parents=True, exist_ok=True)
@@ -80,12 +89,25 @@ class TTSService:
             print(f"말하기 속도 계산 실패: {str(e)}")
             return 1.0
 
-    async def synthesize_segment(self, text: str, speaking_rate: float = 1.0) -> Optional[AudioSegment]:
-        """텍스트 세그먼트를 음성으로 변환"""
+    async def synthesize_segment(self, text: str, speaking_rate: float = 1.0, voice_profile: str = None) -> Optional[AudioSegment]:
+        """텍스트 세그먼트를 음성으로 변환 (7단계 완료)"""
         try:
             input_text = texttospeech.SynthesisInput(text=text)
-            voice = config.VOICE_CONFIG
-            audio_config = config.AUDIO_CONFIG
+            
+            # 음성 프로필이 지정된 경우 해당 프로필 사용, 그렇지 않으면 기본 설정 사용
+            if voice_profile:
+                voice = texttospeech.VoiceSelectionParams(
+                    language_code="ko-KR",
+                    name=voice_profile
+                )
+            else:
+                voice = config.VOICE_CONFIG
+            
+            # 음성 설정에 말하기 속도 추가
+            audio_config = texttospeech.AudioConfig(
+                audio_encoding=texttospeech.AudioEncoding.LINEAR16,
+                speaking_rate=speaking_rate
+            )
             
             response = self.client.synthesize_speech(
                 input=input_text,
@@ -174,13 +196,139 @@ class TTSService:
             
             # 최종 오디오 파일 저장 (MP3 형식 유지)
             # -loglevel quiet 매개변수를 추가하여 ffmpeg 출력을 비활성화
-            final_audio.export(output_path, format="mp3", parameters=["-loglevel", "quiet"])
+            final_audio.export(output_path, format="wav", parameters=["-loglevel", "quiet"])
             print(f"TTS 처리 완료: {output_path}")
             
             return output_path
             
         except Exception as e:
             print(f"TSV 세그먼트 처리 실패: {str(e)}")
+            return None
+
+    async def process_multi_speaker_tsv(self, tsv_path: str, task_id: str) -> Optional[str]:
+        """화자별 음성으로 TSV 파일 처리 (3-6단계 완료)"""
+        try:
+            tsv_filename = os.path.basename(tsv_path)  # tsv 파일명 추출
+            output_filename = os.path.splitext(tsv_filename)[0] + "_ko.wav"  # 출력 파일명
+            output_path = os.path.join(self.output_dir, output_filename)  # 최종 경로 생성
+            epsilon = 1e-6  # 부동소수점 오차 보정용
+            
+            # 파일 읽기
+            with open(tsv_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+                if not lines:  # 파일이 비어 있는 경우
+                    print("파일이 비어 있습니다.")
+                    return None
+                
+                # 헤더 확인 및 처리
+                header_line = True if lines[0].strip().startswith('start') else False
+                if header_line:
+                    lines = lines[1:]  # 헤더 제외
+                
+                # 1단계: 화자 ID 추출 및 고유 화자 목록 생성 (완료)
+                speaker_segments = {}
+                all_segments = []
+                
+                # 모든 행을 처리하여 세그먼트 정보 추출
+                for line in lines:
+                    parts = line.strip().split('\t')
+                    if len(parts) < 4:  # start_time, end_time, speaker_id, text가 필요
+                        continue
+                    
+                    try:
+                        start_time = float(parts[0])
+                        end_time = float(parts[1])
+                        speaker_id = parts[2]
+                        text = parts[3]
+                        
+                        segment = {
+                            "start": start_time,
+                            "end": end_time,
+                            "speaker": speaker_id,
+                            "text": text
+                        }
+                        
+                        all_segments.append(segment)
+                        
+                        # 화자별 세그먼트 그룹화
+                        if speaker_id not in speaker_segments:
+                            speaker_segments[speaker_id] = []
+                        speaker_segments[speaker_id].append(segment)
+                        
+                    except (ValueError, IndexError) as e:
+                        print(f"세그먼트 파싱 오류: {line.strip()} - {str(e)}")
+                        continue
+                
+                # 고유 화자 ID 목록
+                unique_speakers = list(speaker_segments.keys())
+                print(f"발견된 화자 수: {len(unique_speakers)} - {unique_speakers}")
+                
+                # 2단계: 화자별 음성 프로필 매핑 (완료)
+                speaker_to_voice = {}
+                for idx, speaker_id in enumerate(unique_speakers):
+                    if idx < 5:  # 최대 5명까지 지원
+                        profile_key = f"{idx:02d}"
+                        if profile_key in self.voice_profiles:
+                            speaker_to_voice[speaker_id] = self.voice_profiles[profile_key]
+                        else:
+                            speaker_to_voice[speaker_id] = self.voice_profiles["00"]  # 기본값
+                    else:
+                        speaker_to_voice[speaker_id] = self.voice_profiles["00"]  # 기본 음성
+                
+                # 5단계: 최종 오디오 생성 준비 (완료)
+                # 최대 종료 시간 확인하여 전체 오디오 길이 결정
+                max_end_time = max([segment["end"] for segment in all_segments])
+                final_duration = int(max_end_time * 1000)  # 밀리초 단위 변환
+                final_audio = AudioSegment.silent(duration=final_duration)
+                
+                # 모든 세그먼트를 시간순으로 정렬
+                all_segments.sort(key=lambda x: x["start"])
+                
+                # 각 세그먼트 처리
+                for segment in all_segments:
+                    start_time = segment["start"]
+                    end_time = segment["end"]
+                    speaker_id = segment["speaker"]
+                    text = segment["text"]
+                    
+                    # 세그먼트 지속 시간
+                    duration = end_time - start_time
+                    
+                    if text and duration > 0:
+                        # 말하기 속도 계산
+                        speaking_rate = await self.calculate_speaking_rate(text, duration)
+                        
+                        # 화자에 해당하는 음성으로 합성
+                        voice_profile = speaker_to_voice.get(speaker_id)
+                        segment_audio = await self.synthesize_segment(text, speaking_rate, voice_profile)
+                        
+                        if segment_audio:
+                            # 세그먼트 길이 확인 및 조정
+                            segment_duration = len(segment_audio) / 1000  # 밀리초 -> 초
+                            
+                            # 길이 조정 (필요시)
+                            if segment_duration < duration - epsilon:
+                                # 짧은 경우 무음 추가
+                                silence = AudioSegment.silent(duration=int((duration - segment_duration) * 1000))
+                                segment_audio += silence
+                            elif segment_duration > duration + epsilon:
+                                # 긴 경우 잘라내기
+                                segment_audio = segment_audio[:int(duration * 1000)]
+                            
+                            # 해당 위치에 오디오 삽입
+                            start_pos = int(start_time * 1000)  # 밀리초 단위로 변환
+                            final_audio = final_audio.overlay(segment_audio, position=start_pos)
+                
+                # 6단계: 최종 오디오 저장 (완료)
+                final_audio.export(output_path, format="wav", parameters=["-loglevel", "quiet"])
+                print(f"다중 화자 TTS 처리 완료: {output_path}")
+                
+                return output_path
+        
+        except Exception as e:
+            print(f"다중 화자 TTS 처리 실패: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
             return None
 
     async def find_local_tsv_file(self, input_filename: str) -> Optional[str]:
@@ -203,8 +351,8 @@ class TTSService:
             print(f"로컬 TSV 파일 검색 실패: {str(e)}")
             return None
 
-    async def process_text(self, task_id: str, video_path: str) -> Optional[str]:
-        """전체 TTS 처리 프로세스"""
+    async def process_text(self, task_id: str, video_path: str, multi_speaker: bool = True) -> Optional[str]:
+        """전체 TTS 처리 프로세스 (8단계 완료)"""
         try:
             # 입력 파일명 추출
             input_filename = os.path.basename(video_path)
@@ -214,8 +362,12 @@ class TTSService:
             if not tsv_path:
                 raise Exception("로컬 TSV 파일을 찾을 수 없습니다")
             
-            # TSV 파일 처리
-            output_path = await self.process_tsv_segments(tsv_path, task_id)
+            # TSV 파일 처리 (다중 화자 모드 선택)
+            if multi_speaker:
+                output_path = await self.process_multi_speaker_tsv(tsv_path, task_id)
+            else:
+                output_path = await self.process_tsv_segments(tsv_path, task_id)
+                
             if not output_path:
                 raise Exception("TSV 세그먼트 처리 실패")
             

@@ -25,7 +25,7 @@ TARGET_LANGUAGE = 'ko-KR'
 # 음성 설정
 VOICE_CONFIG = texttospeech.VoiceSelectionParams(
     language_code=TARGET_LANGUAGE,
-    name='ko-KR-Chirp3-HD-Leda',
+    name='ko-KR-Standard-A',
 )
 
 # 오디오 설정
