@@ -15,6 +15,8 @@ from src.services.stt import stt_service
 from src.services.nmt import nmt_service
 from src.services.tts import tts_service
 from src.services.video_audio_merger import video_audio_merger
+from src.services.diarization import diarization_service
+from src.services.diarization_stt_merger import diarization_stt_merger
 from google.cloud import storage
 import tempfile
 import asyncio
@@ -113,7 +115,7 @@ async def download_youtube_video(url: str) -> Tuple[str, str, str]:
             'format': 'bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best',
             'merge_output_format': 'mp4',
             'outtmpl': os.path.join(output_dir, '%(title)s.%(ext)s'),
-            'quiet': False,
+            'quiet': True,
             'no_warnings': False,
             'extract_flat': False,
             'nocheckcertificate': True,
@@ -193,7 +195,8 @@ async def download_youtube_video(url: str) -> Tuple[str, str, str]:
 async def process_video_file(video_path: str, task_id: str, denoised_audio_path: str = None, original_audio_path: str = None):
     """비디오 파일 처리 프로세스"""
     try:
-        # STT: 음성을 텍스트로 변환
+        # STT와 화자 분리를 병렬로 실행
+        # 1. STT 작업 시작
         await task_manager.update_task_status(
             task_id,
             status=TaskStatus.PROCESSING,
@@ -201,28 +204,76 @@ async def process_video_file(video_path: str, task_id: str, denoised_audio_path:
             progress=0
         )
         
-        transcript = await stt_service.process_video(video_path, denoised_audio_path, original_audio_path)
-        if not transcript:
+        # 2. 화자 분리 작업 시작
+        await task_manager.update_task_status(
+            task_id,
+            status=TaskStatus.PROCESSING,
+            stage=ProcessingStage.DIARIZATION,
+            progress=0
+        )
+        
+        # 두 작업을 동시에 실행
+        stt_task = asyncio.create_task(
+            stt_service.process_video(video_path, denoised_audio_path, original_audio_path)
+        )
+        diarization_task = asyncio.create_task(
+            diarization_service.process_video(video_path, denoised_audio_path, original_audio_path)
+        )
+        
+        # 두 작업이 모두 완료될 때까지 대기
+        stt_result, diarization_result = await asyncio.gather(stt_task, diarization_task)
+        
+        # 두 결과 검증
+        if not stt_result:
             raise Exception("음성 인식에 실패했습니다.")
             
+        if not diarization_result:
+            print("경고: 화자 분리에 실패했습니다. STT 결과만 사용합니다.")
+        
+        # 3. 결과 병합 단계
+        await task_manager.update_task_status(
+            task_id,
+            status=TaskStatus.PROCESSING,
+            stage=ProcessingStage.MERGE,
+            progress=20
+        )
+        
+        # 화자 분리 결과가 있는 경우, 병합 수행
+        merged_result_path = None
+        if diarization_result:
+            merged_result_path = await diarization_stt_merger.merge_results(
+                stt_result, 
+                diarization_result,
+                denoised_audio_path
+            )
+            
+            if merged_result_path:
+                await task_manager.update_merged_result(task_id, merged_result_path)
+        
+        # 4. 번역 단계
         await task_manager.update_task_status(
             task_id,
             status=TaskStatus.PROCESSING,
             stage=ProcessingStage.TRANSLATION,
-            progress=33
+            progress=40
         )
         
-        # NMT: 영어 텍스트를 한국어로 번역
+        # NMT: 병합된 결과 파일 내용을 읽어서 한국어로 번역
         input_filename = os.path.basename(video_path)
-        translated_text = await nmt_service.process_transcript(transcript, task_id, input_filename)
+        
+        with open(merged_result_path, 'r', encoding='utf-8') as f:
+            merged_content = f.read()
+            
+        translated_text = await nmt_service.process_transcript(merged_content, task_id, input_filename)
         if not translated_text:
             raise Exception("번역에 실패했습니다.")
             
+        # 5. TTS 단계
         await task_manager.update_task_status(
             task_id,
             status=TaskStatus.PROCESSING,
             stage=ProcessingStage.TTS,
-            progress=66
+            progress=70
         )
         
         # TTS: 번역된 텍스트를 음성으로 변환
@@ -230,7 +281,7 @@ async def process_video_file(video_path: str, task_id: str, denoised_audio_path:
         if not tts_audio_path:
             raise Exception("음성 합성에 실패했습니다.")
         
-        # 비디오와 오디오 병합
+        # 6. 비디오와 오디오 병합
         output_path = await video_audio_merger.process_video(task_id, video_path, tts_audio_path, original_audio_path)
         if not output_path:
             raise Exception("비디오 합성에 실패했습니다.")
@@ -412,6 +463,46 @@ async def download_video(task_id: str):
         return FileResponse(
             full_path,
             media_type="video/mp4",
+            filename=os.path.basename(full_path)
+        )
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"다운로드 중 오류가 발생했습니다: {str(e)}")
+
+@router.get("/download-merged/{task_id}")
+async def download_merged_result(task_id: str):
+    """병합된 화자 분리 및 STT 결과 다운로드"""
+    try:
+        # 작업 상태 확인
+        task_status = await task_manager.get_task_status(task_id)
+        if not task_status:
+            raise HTTPException(status_code=404, detail="작업을 찾을 수 없습니다.")
+            
+        # 병합 결과가 있는지 확인
+        if not task_status.get("merged_result"):
+            raise HTTPException(status_code=404, detail="병합된 결과 파일을 찾을 수 없습니다.")
+        
+        # 결과 파일 경로 처리
+        merged_result_path = task_status.get("merged_result")
+        
+        # 미디어 타입 설정 (텍스트 형식)
+        media_type = "text/plain"
+            
+        # 상대 경로인 경우 TEMP_DIR과 결합
+        if not os.path.isabs(merged_result_path):
+            full_path = os.path.join(config.TEMP_DIR, merged_result_path)
+        else:
+            # 절대 경로인 경우 그대로 사용
+            full_path = merged_result_path
+            
+        # 파일이 존재하는지 확인
+        if not os.path.exists(full_path):
+            raise HTTPException(status_code=404, detail=f"결과 파일을 찾을 수 없습니다: {full_path}")
+            
+        # 파일 응답 반환
+        return FileResponse(
+            full_path,
+            media_type=media_type,
             filename=os.path.basename(full_path)
         )
             
