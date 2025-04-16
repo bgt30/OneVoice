@@ -99,7 +99,6 @@ const HomePage: React.FC = () => {
         </Typography>
         <Typography variant="subtitle1" align="center" color="text.secondary" paragraph>
           영어 동영상을 한국어로 더빙하세요. MP4 파일을 업로드하거나 YouTube 링크를 입력하세요.
-          (최대 10분)
         </Typography>
       </Box>
 
