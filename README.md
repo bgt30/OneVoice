@@ -11,20 +11,19 @@ OneVoice is a web application that automatically dubs English videos into Korean
 - **Speech-to-Text**: Extract English audio and convert to text (STT)
 - **Speaker Diarization**: Automatically identify and separate different speakers in the source video
 - **Translation**: Translate text from English to Korean
-- **Text-to-Speech**: Convert Korean text to speech (TTS)
+- **Multi-speaker TTS**: Generate different voice profiles for each speaker in the video (Coming soon)
 - **Video Synthesis**: Synthesize translated Korean audio with the original video
 - **Real-time Monitoring**: Track task progress in real-time
 - **Download Results**: Download completed dubbed videos
 
 ## In Development
 
-- **Multi-speaker TTS**: Generate different voice profiles for each speaker in the video (Coming soon)
+- **Voice Cloning**: Clone and reproduce voices of specific speakers for more authentic dubbing
+- **Multi-language Support**: Expand translation and dubbing capabilities to support multiple languages beyond Korean, including Japanese, Chinese, Spanish, French, and German
 
 ## Upcoming Features
 
-- **Multi-language Support**: Expand translation and dubbing capabilities to support multiple languages beyond Korean, including Japanese, Chinese, Spanish, French, and German
 - **Speech Style and Emotion Cloning**: Reproduce speech styles, emotions, and intonation patterns from the original audio
-- **Voice Cloning**: Clone and reproduce voices of specific speakers for more authentic dubbing
 - **Lip-Sync**: Apply advanced lip-sync algorithms to match audio with video mouth movements
 
 ## Technology Stack
