@@ -57,40 +57,8 @@ class TTSService:
         import re
         return re.sub(r'\[\d+\.\d+s - \d+\.\d+s\]', '', text).strip()
 
-    async def calculate_speaking_rate(self, text: str, target_duration: float) -> float:
-        """목표 시간에 맞는 말하기 속도 계산"""
-        try:
-            # 기본 설정으로 음성 합성 시도
-            input_text = texttospeech.SynthesisInput(text=text)
-            voice = config.VOICE_CONFIG
-            audio_config = config.AUDIO_CONFIG
-            
-            response = self.client.synthesize_speech(
-                input=input_text,
-                voice=voice,
-                audio_config=audio_config
-            )
-            
-            # 임시 파일로 저장하여 길이 측정
-            temp_audio = AudioSegment.from_wav(io.BytesIO(response.audio_content))
-            current_duration = len(temp_audio) / 1000  # 밀리초 -> 초
-            
-            # 현재 지속 시간과 타겟 지속 시간 비교
-            if current_duration > target_duration:
-                # 타임스탬프 시간보다 길다면 속도를 빠르게 조절
-                speaking_rate = current_duration / target_duration
-            else:
-                # 타임스탬프 시간보다 짧다면 속도는 1.0으로 유지
-                speaking_rate = 1.0
-            
-            return speaking_rate
-            
-        except Exception as e:
-            print(f"말하기 속도 계산 실패: {str(e)}")
-            return 1.0
-
-    async def synthesize_segment(self, text: str, speaking_rate: float = 1.0, voice_profile: str = None) -> Optional[AudioSegment]:
-        """텍스트 세그먼트를 음성으로 변환 (7단계 완료)"""
+    async def synthesize_segment(self, text: str, target_duration: float, voice_profile: str = None) -> Optional[AudioSegment]:
+        """텍스트 세그먼트를 음성으로 변환하고 목표 기간에 맞게 속도 조절"""
         try:
             input_text = texttospeech.SynthesisInput(text=text)
             
@@ -103,19 +71,52 @@ class TTSService:
             else:
                 voice = config.VOICE_CONFIG
             
-            # 음성 설정에 말하기 속도 추가
+            # 기본 음성 설정 사용 (속도 조절 없음)
             audio_config = texttospeech.AudioConfig(
-                audio_encoding=texttospeech.AudioEncoding.LINEAR16,
-                speaking_rate=speaking_rate
+                audio_encoding=texttospeech.AudioEncoding.LINEAR16
             )
             
+            # 음성 합성 (한 번만 TTS API 호출)
             response = self.client.synthesize_speech(
                 input=input_text,
                 voice=voice,
                 audio_config=audio_config
             )
             
-            return AudioSegment.from_wav(io.BytesIO(response.audio_content))
+            # 생성된 오디오를 AudioSegment으로 변환
+            segment = AudioSegment.from_wav(io.BytesIO(response.audio_content))
+            
+            # 현재 세그먼트 길이 계산
+            current_duration = len(segment) / 1000  # 밀리초 -> 초
+            
+            # 목표 길이와 비교하여 속도 계산
+            epsilon = 1e-6  # 부동소수점 오차 보정용
+            
+            if abs(current_duration - target_duration) > epsilon:
+                if current_duration > target_duration:
+                    # 생성된 오디오가 타깃보다 길면 속도를 빠르게 조절 (pydub speedup 사용)
+                    speed_factor = current_duration / target_duration
+                    if speed_factor > 1.0:
+                        try:
+                            segment = segment.speedup(playback_speed=speed_factor)
+                            print(f"오디오 속도 조절: x{speed_factor:.2f}")
+                        except Exception as e:
+                            print(f"오디오 속도 조절 실패: {str(e)}")
+                else:
+                    # 생성된 오디오가 타깃보다 짧으면 그대로 유지하고 필요시 무음 추가
+                    pass
+            
+            # 최종 길이 확인 및 조정 (필요시)
+            final_duration = len(segment) / 1000
+            if final_duration < target_duration - epsilon:
+                # 여전히 짧다면 무음 추가
+                silence = self.generate_silence(target_duration - final_duration)
+                segment += silence
+            elif final_duration > target_duration + epsilon:
+                # 여전히 길다면 잘라내기
+                segment = segment[:int(target_duration * 1000)]
+            
+            return segment
             
         except Exception as e:
             print(f"음성 합성 실패: {str(e)}")
@@ -165,22 +166,10 @@ class TTSService:
                         duration = end - start
                         
                         if text:  # 텍스트가 있는 경우
-                            # 말하기 속도 계산
-                            speaking_rate = await self.calculate_speaking_rate(text, duration)
-                            
-                            # 음성 합성
-                            segment = await self.synthesize_segment(text, speaking_rate)
+                            # 직접 target_duration으로 음성 합성 및 속도 조절
+                            segment = await self.synthesize_segment(text, duration)
                             if segment is None:
                                 continue
-                            
-                            # 타임스탬프 시간보다 짧다면 무음 추가 (부동소수점 오차 보정)
-                            segment_duration = len(segment) / 1000  # 밀리초 -> 초
-                            if segment_duration < duration - epsilon:
-                                silence = AudioSegment.silent(duration=int((duration - segment_duration) * 1000))
-                                segment += silence
-                            elif segment_duration > duration + epsilon:
-                                # 세그먼트가 길면 잘라내기
-                                segment = segment[:int(duration * 1000)]
                         else:  # 텍스트 없는 경우 무음
                             segment = self.generate_silence(duration)
                         
@@ -194,7 +183,7 @@ class TTSService:
                         print(f"세그먼트 처리 중 오류 발생: {str(e)}")
                         continue
             
-            # 최종 오디오 파일 저장 (MP3 형식 유지)
+            # 최종 오디오 파일 저장 (WAV 형식)
             # -loglevel quiet 매개변수를 추가하여 ffmpeg 출력을 비활성화
             final_audio.export(output_path, format="wav", parameters=["-loglevel", "quiet"])
             print(f"TTS 처리 완료: {output_path}")
@@ -295,26 +284,11 @@ class TTSService:
                     duration = end_time - start_time
                     
                     if text and duration > 0:
-                        # 말하기 속도 계산
-                        speaking_rate = await self.calculate_speaking_rate(text, duration)
-                        
-                        # 화자에 해당하는 음성으로 합성
+                        # 화자에 해당하는 음성으로 합성 및 속도 조절
                         voice_profile = speaker_to_voice.get(speaker_id)
-                        segment_audio = await self.synthesize_segment(text, speaking_rate, voice_profile)
+                        segment_audio = await self.synthesize_segment(text, duration, voice_profile)
                         
                         if segment_audio:
-                            # 세그먼트 길이 확인 및 조정
-                            segment_duration = len(segment_audio) / 1000  # 밀리초 -> 초
-                            
-                            # 길이 조정 (필요시)
-                            if segment_duration < duration - epsilon:
-                                # 짧은 경우 무음 추가
-                                silence = AudioSegment.silent(duration=int((duration - segment_duration) * 1000))
-                                segment_audio += silence
-                            elif segment_duration > duration + epsilon:
-                                # 긴 경우 잘라내기
-                                segment_audio = segment_audio[:int(duration * 1000)]
-                            
                             # 해당 위치에 오디오 삽입
                             start_pos = int(start_time * 1000)  # 밀리초 단위로 변환
                             final_audio = final_audio.overlay(segment_audio, position=start_pos)
