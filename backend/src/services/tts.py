@@ -18,7 +18,7 @@ class TTSService:
         self.output_dir = os.path.join(config.TEMP_DIR, "audio")
         self.text_ko_dir = os.path.join(config.TEMP_DIR, "text_ko")
         
-        # 화자별 음성 프로필 정의 (1단계, 2단계 완료)
+        # 화자별 음성 프로필 정의
         self.voice_profiles = {
             "00": "ko-KR-Chirp3-HD-Aoede",
             "01": "ko-KR-Chirp3-HD-Charon", 
@@ -195,7 +195,7 @@ class TTSService:
             return None
 
     async def process_multi_speaker_tsv(self, tsv_path: str, task_id: str) -> Optional[str]:
-        """화자별 음성으로 TSV 파일 처리 (3-6단계 완료)"""
+        """화자별 음성으로 TSV 파일 처리"""
         try:
             tsv_filename = os.path.basename(tsv_path)  # tsv 파일명 추출
             output_filename = os.path.splitext(tsv_filename)[0] + "_ko.wav"  # 출력 파일명
@@ -214,7 +214,6 @@ class TTSService:
                 if header_line:
                     lines = lines[1:]  # 헤더 제외
                 
-                # 1단계: 화자 ID 추출 및 고유 화자 목록 생성 (완료)
                 speaker_segments = {}
                 all_segments = []
                 
@@ -252,7 +251,6 @@ class TTSService:
                 unique_speakers = list(speaker_segments.keys())
                 print(f"발견된 화자 수: {len(unique_speakers)} - {unique_speakers}")
                 
-                # 2단계: 화자별 음성 프로필 매핑 (완료)
                 speaker_to_voice = {}
                 for idx, speaker_id in enumerate(unique_speakers):
                     if idx < 5:  # 최대 5명까지 지원
@@ -264,7 +262,6 @@ class TTSService:
                     else:
                         speaker_to_voice[speaker_id] = self.voice_profiles["00"]  # 기본 음성
                 
-                # 5단계: 최종 오디오 생성 준비 (완료)
                 # 최대 종료 시간 확인하여 전체 오디오 길이 결정
                 max_end_time = max([segment["end"] for segment in all_segments])
                 final_duration = int(max_end_time * 1000)  # 밀리초 단위 변환
@@ -293,7 +290,6 @@ class TTSService:
                             start_pos = int(start_time * 1000)  # 밀리초 단위로 변환
                             final_audio = final_audio.overlay(segment_audio, position=start_pos)
                 
-                # 6단계: 최종 오디오 저장 (완료)
                 final_audio.export(output_path, format="wav", parameters=["-loglevel", "quiet"])
                 print(f"다중 화자 TTS 처리 완료: {output_path}")
                 
