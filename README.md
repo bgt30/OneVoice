@@ -124,7 +124,3 @@ onevoice/
 
 - Main language is limited to English (original) to Korean (translation)
 - Dubbing quality depends on the GCP API
-
-## License
-
-[MIT License](LICENSE) 
